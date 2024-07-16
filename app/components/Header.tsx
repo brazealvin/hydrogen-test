@@ -107,7 +107,7 @@ function HeaderCtas({
       <NavLink prefetch="intent" to="/account" style={activeLinkStyle}>
         <Suspense fallback="Sign in">
           <Await resolve={isLoggedIn} errorElement="Sign in">
-            {(isLoggedIn) => (isLoggedIn ? 'Account' : 'Sign in')}
+            {(isLoggedIn) => (isLoggedIn ? 'Account' : 'Sign In')}
           </Await>
         </Suspense>
       </NavLink>
