@@ -17,6 +17,10 @@ import appStyles from '~/styles/app.css?url';
 import {PageLayout} from '~/components/PageLayout';
 import {FOOTER_QUERY, HEADER_QUERY} from '~/lib/fragments';
 
+import * as braze from "@braze/web-sdk";
+import { useEffect } from 'react';
+import {defer} from '@shopify/remix-oxygen';
+
 export type RootLoader = typeof loader;
 
 /**
@@ -56,7 +60,7 @@ export function links() {
   ];
 }
 
-export async function loader(args: LoaderFunctionArgs) {
+export async function loader(args) {
   // Start fetching non-critical data without blocking time to first byte
   const deferredData = loadDeferredData(args);
 
@@ -65,10 +69,24 @@ export async function loader(args: LoaderFunctionArgs) {
 
   const {storefront, env} = args.context;
 
+  const isLoggedIn = await deferredData.isLoggedIn;
+  let customerData;
+  if (isLoggedIn) {
+    const { data, errors } = await args.context.customerAccount.query(
+        CUSTOMER_DETAILS_QUERY,
+    );
+    customerData = data.customer
+  } else {
+    customerData = {}
+  }
+
   return defer({
     ...deferredData,
     ...criticalData,
     publicStoreDomain: env.PUBLIC_STORE_DOMAIN,
+    brazeApiKey: env.BRAZE_API_KEY,
+    brazeApiUrl: env.BRAZE_API_URL,
+    customerData: customerData,
     shop: getShopAnalytics({
       storefront,
       publicStorefrontId: env.PUBLIC_STOREFRONT_ID,
@@ -76,9 +94,14 @@ export async function loader(args: LoaderFunctionArgs) {
     consent: {
       checkoutDomain: env.PUBLIC_CHECKOUT_DOMAIN,
       storefrontAccessToken: env.PUBLIC_STOREFRONT_API_TOKEN,
+      withPrivacyBanner: false,
+      // localize the privacy banner
+      country: args.context.storefront.i18n.country,
+      language: args.context.storefront.i18n.language,
     },
   });
 }
+
 
 /**
  * Load data necessary for rendering content above the fold. This is the critical data
@@ -130,9 +153,26 @@ function loadDeferredData({context}: LoaderFunctionArgs) {
   };
 }
 
-export function Layout({children}: {children?: React.ReactNode}) {
+export function Layout({children}) {
   const nonce = useNonce();
-  const data = useRouteLoaderData<RootLoader>('root');
+  /** @type {RootLoader} */
+  const data = useRouteLoaderData('root');
+  
+  useEffect(() => {
+    braze.initialize(data.brazeApiKey, {
+      baseUrl: data.brazeApiUrl,
+      enableLogging: true,
+    });
+    braze.openSession()
+    
+    data.isLoggedIn.then((isLoggedIn) => {
+      if(isLoggedIn) {
+        trackCustomerLogin(data.customerData, data.publicStoreDomain)
+      }
+    })
+
+    console.log(`DEVICEID: ${braze.getDeviceId()}`)
+  })
 
   return (
     <html lang="en">
@@ -160,6 +200,29 @@ export function Layout({children}: {children?: React.ReactNode}) {
     </html>
   );
 }
+
+export function trackCustomerLogin(customerData, storefrontUrl) {
+  const braze = window.braze;
+  
+  const customerId = customerData.id.substring(customerData.id.lastIndexOf('/') + 1)
+  const customerSessionKey = `ab.shopify.shopify_customer_${customerId}`;
+  const alreadySetCustomerInfo = sessionStorage.getItem(customerSessionKey);
+  
+  if(!alreadySetCustomerInfo) {
+    const user = braze.getUser()
+    braze.changeUser(customerId)
+    user.setFirstName(customerData.firstName);
+    user.setLastName(customerData.lastName);
+    user.setEmail(customerData.emailAddress.emailAddress);
+    user.setPhoneNumber(customerData.phoneNumber.phoneNumber);
+    braze.logCustomEvent(
+      "shopify_account_login",
+      { source: storefrontUrl }
+    )
+    sessionStorage.setItem(customerSessionKey, customerId);
+  }
+}
+
 
 export default function App() {
   return <Outlet />;
