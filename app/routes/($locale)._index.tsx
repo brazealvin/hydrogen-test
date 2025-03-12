@@ -100,7 +100,7 @@ function RecommendedProducts({
           {(response) => (
             <div className="recommended-products-grid">
               {response
-                ? response.products.nodes.map((product) => (
+                ? response.products?.nodes.map((product) => (
                     <Link
                       key={product.id}
                       className="recommended-product"
