@@ -1,5 +1,5 @@
 import {useNonce, getShopAnalytics, Analytics} from '@shopify/hydrogen';
-import {defer, type LoaderFunctionArgs} from '@shopify/remix-oxygen';
+import {type LoaderFunctionArgs} from '@shopify/remix-oxygen';
 import {
   Links,
   Meta,
@@ -14,12 +14,13 @@ import {
 import favicon from '~/assets/favicon.svg';
 import resetStyles from '~/styles/reset.css?url';
 import appStyles from '~/styles/app.css?url';
+import tailwindCss from './styles/tailwind.css?url';
 import {PageLayout} from '~/components/PageLayout';
 import {FOOTER_QUERY, HEADER_QUERY} from '~/lib/fragments';
-
-import * as braze from "@braze/web-sdk";
 import { useEffect } from 'react';
 import {defer} from '@shopify/remix-oxygen';
+
+import * as braze from "@braze/web-sdk"; // add this to the top of root.jsx file
 
 export type RootLoader = typeof loader;
 
@@ -32,22 +33,31 @@ export const shouldRevalidate: ShouldRevalidateFunction = ({
   nextUrl,
 }) => {
   // revalidate when a mutation is performed e.g add to cart, login...
-  if (formMethod && formMethod !== 'GET') {
-    return true;
-  }
+  if (formMethod && formMethod !== 'GET') return true;
 
   // revalidate when manually revalidating via useRevalidator
-  if (currentUrl.toString() === nextUrl.toString()) {
-    return true;
-  }
+  if (currentUrl.toString() === nextUrl.toString()) return true;
 
+  // Defaulting to no revalidation for root loader data to improve performance.
+  // When using this feature, you risk your UI getting out of sync with your server.
+  // Use with caution. If you are uncomfortable with this optimization, update the
+  // line below to `return defaultShouldRevalidate` instead.
+  // For more details see: https://remix.run/docs/en/main/route/should-revalidate
   return false;
 };
 
+/**
+ * The main and reset stylesheets are added in the Layout component
+ * to prevent a bug in development HMR updates.
+ *
+ * This avoids the "failed to execute 'insertBefore' on 'Node'" error
+ * that occurs after editing and navigating to another page.
+ *
+ * It's a temporary fix until the issue is resolved.
+ * https://github.com/remix-run/remix/issues/9242
+ */
 export function links() {
   return [
-    {rel: 'stylesheet', href: resetStyles},
-    {rel: 'stylesheet', href: appStyles},
     {
       rel: 'preconnect',
       href: 'https://cdn.shopify.com',
@@ -103,6 +113,7 @@ export async function loader(args) {
 }
 
 
+
 /**
  * Load data necessary for rendering content above the fold. This is the critical data
  * needed to render the page. If it's unavailable, the whole page should 400 or 500 error.
@@ -120,9 +131,7 @@ async function loadCriticalData({context}: LoaderFunctionArgs) {
     // Add other queries here, so that they are loaded in parallel
   ]);
 
-  return {
-    header,
-  };
+  return {header};
 }
 
 /**
@@ -153,32 +162,32 @@ function loadDeferredData({context}: LoaderFunctionArgs) {
   };
 }
 
-export function Layout({children}) {
+export function Layout({children}: {children?: React.ReactNode}) {
   const nonce = useNonce();
-  /** @type {RootLoader} */
-  const data = useRouteLoaderData('root');
-  
+  const data = useRouteLoaderData<RootLoader>('root');
+
   useEffect(() => {
     braze.initialize(data.brazeApiKey, {
       baseUrl: data.brazeApiUrl,
       enableLogging: true,
     });
     braze.openSession()
-    
+
     data.isLoggedIn.then((isLoggedIn) => {
       if(isLoggedIn) {
         trackCustomerLogin(data.customerData, data.publicStoreDomain)
       }
-    })
-
-    console.log(`DEVICEID: ${braze.getDeviceId()}`)
-  })
+    })    
+  }, [data])
 
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <link rel="stylesheet" href={tailwindCss}></link>
+        <link rel="stylesheet" href={resetStyles}></link>
+        <link rel="stylesheet" href={appStyles}></link>
         <Meta />
         <Links />
       </head>
@@ -200,29 +209,6 @@ export function Layout({children}) {
     </html>
   );
 }
-
-export function trackCustomerLogin(customerData, storefrontUrl) {
-  const braze = window.braze;
-  
-  const customerId = customerData.id.substring(customerData.id.lastIndexOf('/') + 1)
-  const customerSessionKey = `ab.shopify.shopify_customer_${customerId}`;
-  const alreadySetCustomerInfo = sessionStorage.getItem(customerSessionKey);
-  
-  if(!alreadySetCustomerInfo) {
-    const user = braze.getUser()
-    braze.changeUser(customerId)
-    user.setFirstName(customerData.firstName);
-    user.setLastName(customerData.lastName);
-    user.setEmail(customerData.emailAddress.emailAddress);
-    user.setPhoneNumber(customerData.phoneNumber.phoneNumber);
-    braze.logCustomEvent(
-      "shopify_account_login",
-      { source: storefrontUrl }
-    )
-    sessionStorage.setItem(customerSessionKey, customerId);
-  }
-}
-
 
 export default function App() {
   return <Outlet />;
@@ -251,4 +237,26 @@ export function ErrorBoundary() {
       )}
     </div>
   );
+}
+
+export function trackCustomerLogin(customerData, storefrontUrl) {
+  const braze = window.braze;
+  
+  const customerId = customerData.id.substring(customerData.id.lastIndexOf('/') + 1)
+  const customerSessionKey = `ab.shopify.shopify_customer_${customerId}`;
+  const alreadySetCustomerInfo = sessionStorage.getItem(customerSessionKey);
+  
+  if(!alreadySetCustomerInfo) {
+    const user = braze.getUser()
+    braze.changeUser(customerId)
+    user.setFirstName(customerData.firstName);
+    user.setLastName(customerData.lastName);
+    user.setEmail(customerData.emailAddress.emailAddress);
+    user.setPhoneNumber(customerData.phoneNumber.phoneNumber);
+    braze.logCustomEvent(
+      "shopify_account_login",
+      { source: storefrontUrl }
+    )
+    sessionStorage.setItem(customerSessionKey, customerId);
+  }
 }
